@@ -22,3 +22,6 @@
 [submodule "ThirdParty/OpenFBX"]
 	path = ThirdParty/OpenFBX
 	url = https://github.com/nem0/OpenFBX.git
+[submodule "ThirdParty/assimp"]
+	path = ThirdParty/assimp
+	url = https://github.com/DarkRavenStar/assimp.git
