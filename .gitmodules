@@ -7,3 +7,6 @@
 [submodule "ThirdParty/imgui"]
 	path = ThirdParty/imgui
 	url = https://github.com/DarkRavenStar/imgui.git
+[submodule "ThirdParty/nanosvg"]
+	path = ThirdParty/nanosvg
+	url = https://github.com/DarkRavenStar/nanosvg.git
