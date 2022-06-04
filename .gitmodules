@@ -10,3 +10,6 @@
 [submodule "ThirdParty/nanosvg"]
 	path = ThirdParty/nanosvg
 	url = https://github.com/DarkRavenStar/nanosvg.git
+[submodule "ThirdParty/Sharpmake"]
+	path = ThirdParty/Sharpmake
+	url = https://github.com/DarkRavenStar/Sharpmake.git
