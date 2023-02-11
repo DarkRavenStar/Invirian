@@ -12,6 +12,8 @@
 #include "AstranWidgetUI.h"
 #include <filesystem>
 
+#pragma region NN
+
 static VkAllocationCallbacks* g_Allocator = NULL;
 static VkInstance               g_Instance = VK_NULL_HANDLE;
 static VkPhysicalDevice         g_PhysicalDevice = VK_NULL_HANDLE;
@@ -332,6 +334,80 @@ static void MouseScrollCallback(GLFWwindow* window, double xoffset, double yoffs
 {
 }
 
+
+
+VkInstance AstranEditorUI::GetInstance()
+{
+	return g_Instance;
+}
+
+VkPhysicalDevice AstranEditorUI::GetPhysicalDevice()
+{
+	return g_PhysicalDevice;
+}
+
+VkDevice AstranEditorUI::GetDevice()
+{
+	return g_Device;
+}
+
+VkCommandBuffer AstranEditorUI::GetCommandBuffer(bool begin)
+{
+	ImGui_ImplVulkanH_Window* wd = &g_MainWindowData;
+
+	// Use any command queue
+	VkCommandPool command_pool = wd->Frames[wd->FrameIndex].CommandPool;
+
+	VkCommandBufferAllocateInfo cmdBufAllocateInfo = {};
+	cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+	cmdBufAllocateInfo.commandPool = command_pool;
+	cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	cmdBufAllocateInfo.commandBufferCount = 1;
+
+	VkCommandBuffer command_buffer;
+	auto err = vkAllocateCommandBuffers(g_Device, &cmdBufAllocateInfo, &command_buffer);
+
+	VkCommandBufferBeginInfo begin_info = {};
+	begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	begin_info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	err = vkBeginCommandBuffer(command_buffer, &begin_info);
+	check_vk_result(err);
+
+	return command_buffer;
+}
+
+void AstranEditorUI::FlushCommandBuffer(VkCommandBuffer commandBuffer)
+{
+	const uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
+
+	VkSubmitInfo end_info = {};
+	end_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	end_info.commandBufferCount = 1;
+	end_info.pCommandBuffers = &commandBuffer;
+	auto err = vkEndCommandBuffer(commandBuffer);
+	check_vk_result(err);
+
+	// Create fence to ensure that the command buffer has finished executing
+	VkFenceCreateInfo fenceCreateInfo = {};
+	fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	fenceCreateInfo.flags = 0;
+	VkFence fence;
+	err = vkCreateFence(g_Device, &fenceCreateInfo, nullptr, &fence);
+	check_vk_result(err);
+
+	err = vkQueueSubmit(g_Queue, 1, &end_info, fence);
+	check_vk_result(err);
+
+	err = vkWaitForFences(g_Device, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT);
+	check_vk_result(err);
+
+	vkDestroyFence(g_Device, fence, nullptr);
+}
+
+
+#pragma endregion
+
+/*
 class ImGuiCleanUp
 {
 public:
@@ -353,16 +429,14 @@ public:
 		alwaysCallDestructor = InAlwaysCallDestructor;
 	}
 
-	/*
-	ImGuiCleanUp(bool inOpened, Destructor inDestructor, bool inAlwaysCallDestructor, bool inLog, const char* inName)
-	{
-		destructor = inDestructor;
-		opened = inOpened;
-		alwaysCallDestructor = inAlwaysCallDestructor;
-		name = inName;
-		log = inLog;
-	}
-	*/
+// 	ImGuiCleanUp(bool inOpened, Destructor inDestructor, bool inAlwaysCallDestructor, bool inLog, const char* inName)
+// 	{
+// 		destructor = inDestructor;
+// 		opened = inOpened;
+// 		alwaysCallDestructor = inAlwaysCallDestructor;
+// 		name = inName;
+// 		log = inLog;
+// 	}
 
 	~ImGuiCleanUp() noexcept(false)
 	{
@@ -375,6 +449,466 @@ public:
 	}
 
 };
+*/
+
+namespace
+{
+	inline ImVec4 NormalizeColor(float r, float g, float b, float a = 255)
+	{
+		return ImVec4(r / 255, g / 255, b / 255, a / 255);
+	}
+
+	inline ImVec4 NormalizeColorGreyscale(float rgb, float a = 255)
+	{
+		return NormalizeColor(rgb, rgb, rgb, a);
+	}
+
+	unsigned int test = 0x292929ff;
+	//There is 2 type of colors format - U32, float4
+	// U32 - CAN BE USED FOR HEXCODE I think
+	// 
+	//ColorConvertU32ToFloat4(col);
+	//ColorConvertFloat4ToU32
+	//ColorConvertHSVtoRGB
+	//ColorConvertRGBtoHSV
+	//Teena - clear color is fake so we can allow main window to be resized without delay
+	//ImVec4 clear_color = ImVec4(1.0f, 1.0f, 1.0f, 0.00f);
+	//ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+	inline ImVec4 activeTabColor = ImVec4(0.16, 0.17, 0.18, 1);
+	inline ImVec4 normalTabColor = ImVec4(0.07, 0.08, 0.09, 1);
+	
+	inline ImVec4 TabColor = ImVec4(0.07, 0.08, 0.09, 1);
+	inline ImVec4 TabHoveredColor = ImVec4(0.07, 0.08, 0.09, 1);
+	inline ImVec4 TabActiveColor = ImVec4(0.07, 0.08, 0.09, 1);
+	inline ImVec4 TabUnfocusedColor = ImVec4(0.07, 0.08, 0.09, 1);
+	inline ImVec4 TabUnfocusedActiveColor = ImVec4(0.07, 0.08, 0.09, 1);
+	
+	inline ImVec4 OrangeTextColor = NormalizeColor(255, 131, 93);
+	inline ImVec4 OrangeUISelectionColor = NormalizeColor(217, 142, 120);
+
+	//Black Color Cycling function
+	inline ImVec4 GetBlackColorUsingNumber(float value)
+	{
+		return NormalizeColorGreyscale(value);
+	}
+
+	//Probably can do cyclic color switching using common level function
+	inline ImVec4 black0 = NormalizeColorGreyscale(0);
+	inline ImVec4 black15 = NormalizeColorGreyscale(15);
+	inline ImVec4 black25 = NormalizeColorGreyscale(25);
+	inline ImVec4 black35 = NormalizeColorGreyscale(35);
+	inline ImVec4 black41 = NormalizeColorGreyscale(41);
+	inline ImVec4 black53 = NormalizeColorGreyscale(53);
+	inline ImVec4 black60 = NormalizeColorGreyscale(60);
+	inline ImVec4 black70 = NormalizeColorGreyscale(70);
+	inline ImVec4 red = ImVec4(1, 0, 0, 1);
+
+	inline ImVec4 MainBackground = black0;
+	inline ImVec4 PropertyTableBackground = black25;
+	inline ImVec4 PropertyTableHeader = black35;
+	inline ImVec4 InnerColor = black15;
+
+// 	Tab,
+// 		TabHovered,
+// 		TabActive,
+// 		TabUnfocused,
+// 		TabUnfocusedActive,
+
+};
+
+namespace StyleTable
+{
+	inline ImVec2 tabFramePadding = ImVec2(20, 10);
+}
+
+namespace
+{
+	
+	class ScopedImGuiColorAndStyle
+	{
+		//const int size = sizeof...(Args);
+		//const int m_Count;
+		int m_PrevColorCount = 0;
+		int m_PrevStyleCount = 0;
+		int m_Level = 0;
+		
+		using Func = void ();
+
+	public:
+		/*
+		template<typename ...Args>
+		ScopedVariableColor(Args&&... args)
+			: m_Count1(sizeof...(args))
+			, m_Count2(sizeof...(Args))
+		{
+			ImGui::PushStyleColor()
+			ImGui::PushStyleVar()
+			printf("m_Count1: %d", m_Count1);
+			printf("m_Count2: %d", m_Count2);
+		}
+		*/
+
+		/*
+		template<void*>
+		ScopedVariableColor(void*&&...)
+			: m_Count1(sizeof...(void*&&))
+		{
+			//ImGui::PushStyleColor()
+				//ImGui::PushStyleVar()
+			printf("m_Count1: %d", m_Count1);
+			printf("m_Count2: %d", m_Count2);
+		}
+		*/
+
+		//ScopedImGuiColorAndStyle(int level, void* func)
+		template <typename Func>
+		ScopedImGuiColorAndStyle(int level, const Func& func)
+		{
+			ImGuiContext& g = *GImGui;
+			m_PrevColorCount = g.ColorStack.size();
+			m_PrevStyleCount = g.StyleVarStack.size();
+			m_Level = level;
+			func();
+		}
+
+		ScopedImGuiColorAndStyle(int level)
+		{
+			ImGuiContext& g = *GImGui;
+			m_PrevColorCount = g.ColorStack.size();
+			m_PrevStyleCount = g.StyleVarStack.size();
+			m_Level = level;
+		}
+
+		~ScopedImGuiColorAndStyle()
+		{
+			ImGuiContext& g = *GImGui;
+			int popColorCount = g.ColorStack.size() - m_PrevColorCount;
+			int popStyleCount = g.StyleVarStack.size() - m_PrevStyleCount;
+
+			assert(popColorCount >= 0 && popStyleCount >= 0);
+
+			DebugPrintInfo();
+
+			ImGui::PopStyleColor(popColorCount);
+			ImGui::PopStyleVar(popStyleCount);
+		}
+
+		void DebugPrintInfo()
+		{
+			ImGuiContext& g = *GImGui;
+			int popColorCount = g.ColorStack.size() - m_PrevColorCount;
+			int popStyleCount = g.StyleVarStack.size() - m_PrevStyleCount;
+
+			printf("Level: %d \n", m_Level);
+			printf("g.ColorStack: %d \n", g.ColorStack.size());
+			printf("g.StyleVarStack: %d \n", g.StyleVarStack.size());
+
+			printf("\n");
+
+			printf("m_PrevColorCount: %d \n", m_PrevColorCount);
+			printf("m_PrevStyleCount: %d \n", m_PrevStyleCount);
+
+			printf("\n");
+
+			printf("popColorCount: %d \n", popColorCount);
+			printf("popStyleCount: %d \n", popStyleCount);
+
+			printf("\n");
+			printf("\n");
+			printf("\n");
+		}
+	};
+
+	void MainWindowBegin()
+	{
+		const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+
+		ImGui::SetNextWindowPos(main_viewport->Pos);
+		ImGui::SetNextWindowSize(main_viewport->Size);
+		ImGui::SetNextWindowDockID(main_viewport->ID);
+
+		ImGuiWindowFlags window_flags = 0;
+		{
+			window_flags |= ImGuiWindowFlags_NoDocking;
+			window_flags |= ImGuiWindowFlags_NoTitleBar;
+			window_flags |= ImGuiWindowFlags_NoCollapse;
+			window_flags |= ImGuiWindowFlags_NoResize;
+			//window_flags |= ImGuiWindowFlags_NoMove;
+			window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus;
+			//window_flags |= ImGuiWindowFlags_NoNavInputs;
+			//window_flags |= ImGuiWindowFlags_NoFocusOnAppearing;
+			window_flags |= ImGuiWindowFlags_AlwaysAutoResize;
+			//window_flags |= ImGuiWindowFlags_NoBackground;
+			//window_flags |= ImGuiWindowFlags_NoSavedSettings;
+			//window_flags |= ImGuiWindowFlags_NoMouseInputs;
+			//window_flags |= ImGuiWindowFlags_MenuBar;
+			//window_flags |= ImGuiWindowFlags_HorizontalScrollbar;
+			//window_flags |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
+			//window_flags |= ImGuiWindowFlags_AlwaysHorizontalScrollbar;
+			//window_flags |= ImGuiWindowFlags_AlwaysUseWindowPadding;
+			//window_flags |= ImGuiWindowFlags_NoNavFocus;
+			//window_flags |= ImGuiWindowFlags_UnsavedDocument;
+		}
+
+		//Teena - Style padding but interfering with inspector testing
+		//ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0, 0));
+		//ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+		//ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+		//ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
+		//ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
+
+		ImGui::Begin("AstranEditor", nullptr, window_flags);
+
+		//ImGui::PopStyleVar();
+		//ImGui::PopAllColorVar();
+	}
+
+	void MainWindowEnd()
+	{
+		ImGui::End();
+	}
+
+	void MainDockSpaceBegin(ImGuiID& mainDockedSpaceID)
+	{
+		ImGuiWindowFlags window_flags = 0;
+		{
+			window_flags |= ImGuiWindowFlags_NoDocking;
+			window_flags |= ImGuiWindowFlags_NoTitleBar;
+			window_flags |= ImGuiWindowFlags_NoCollapse;
+			window_flags |= ImGuiWindowFlags_NoResize;
+			//window_flags |= ImGuiWindowFlags_NoMove;
+			window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus;
+			//window_flags |= ImGuiWindowFlags_NoNavInputs;
+			//window_flags |= ImGuiWindowFlags_NoFocusOnAppearing;
+			window_flags |= ImGuiWindowFlags_AlwaysAutoResize;
+			//window_flags |= ImGuiWindowFlags_NoBackground;
+			//window_flags |= ImGuiWindowFlags_NoSavedSettings;
+			//window_flags |= ImGuiWindowFlags_NoMouseInputs;
+			//window_flags |= ImGuiWindowFlags_MenuBar;
+			//window_flags |= ImGuiWindowFlags_HorizontalScrollbar;
+			//window_flags |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
+			//window_flags |= ImGuiWindowFlags_AlwaysHorizontalScrollbar;
+			//window_flags |= ImGuiWindowFlags_AlwaysUseWindowPadding;
+			//window_flags |= ImGuiWindowFlags_NoNavFocus;
+			//window_flags |= ImGuiWindowFlags_UnsavedDocument;
+		}
+
+		//window_flags &= ~ImGuiWindowFlags_NoDocking;
+		window_flags |= ImGuiWindowFlags_NoBackground;
+		//window_flags |= ImGuiWindowFlags_NoFocusOnAppearing;
+
+		ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
+		mainDockedSpaceID = ImGui::GetID("MainDockedSpace");
+
+		ImGui::PushStyleColor(ImGuiCol_DockingEmptyBg, ImVec4(0, 0, 0, 1));
+		ImGui::PushStyleColor(ImGuiCol_TitleBg, normalTabColor);
+		ImGui::PushStyleColor(ImGuiCol_TitleBgActive, normalTabColor);
+		ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, normalTabColor);
+		ImGui::PushStyleColor(ImGuiCol_Tab, normalTabColor);
+		ImGui::PushStyleColor(ImGuiCol_TabActive, normalTabColor);
+		ImGui::PushStyleColor(ImGuiCol_TabUnfocusedActive, normalTabColor);
+
+		//ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, StyleTable::tabFramePadding); //Tab EXPANDING
+
+		ImGui::DockSpace(mainDockedSpaceID, ImVec2(0, 0));
+
+		
+	}
+
+	void MainDockSpaceEnd()
+	{
+		//Special popping since we need them to maintain tab color
+		ImGui::PopAllStyleVar();
+		ImGui::PopAllColorVar();
+	}
+
+	void ComboBoxUI(const char* name)
+	{
+		static ImGuiComboFlags flags = ImGuiComboFlags_NoArrowButton;
+
+		// Using the generic BeginCombo() API, you have full control over how to display the combo contents.
+		// (your selection data could be an index, a pointer to the object, an id for the object, a flag intrusively
+		// stored in the object itself, etc.)
+		const char* items[] = { "AAAA", "BBBB", "CCCC", "DDDD", "EEEE", "FFFF", "GGGG", "HHHH", "IIII", "JJJJ", "KKKK", "LLLLLLL", "MMMM", "OOOOOOO" };
+		
+		// Here we store our selection data as an index.
+		static int item_current_idx = 0;
+		// Pass in the preview value visible before opening the combo (it could be anything)
+		const char* combo_preview_value = items[item_current_idx];
+		std::string nameID = std::string("##").append(name);
+		if (ImGui::BeginCombo(nameID.c_str(), combo_preview_value, flags))
+		{
+			for (int n = 0; n < IM_ARRAYSIZE(items); n++)
+			{
+				const bool is_selected = (item_current_idx == n);
+				if (ImGui::Selectable(items[n], is_selected))
+					item_current_idx = n;
+
+				// Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
+				//if (is_selected)
+					//ImGui::SetItemDefaultFocus();
+			}
+			ImGui::EndCombo();
+		}
+	}
+
+	void AddTest()
+	{
+
+	}
+	bool doOnce = true;
+	void PropertyTableUI(const char* tableName)
+	{
+		if(doOnce)
+		{
+			ScopedImGuiColorAndStyle a(0, []()
+			{
+				ImGui::PushStyleColor(ImGuiCol_Button, black25);
+				ImGui::PushStyleColor(ImGuiCol_Button, black25);
+				ImGui::PushStyleColor(ImGuiCol_Button, black25);
+				ImGui::PushStyleColor(ImGuiCol_Button, black25);
+
+				ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 35.0f);
+				ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 35.0f);
+				ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 35.0f);
+				ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 35.0f);
+				ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 35.0f);
+			});
+
+			
+
+			{
+
+				ScopedImGuiColorAndStyle b(1, []()
+				{
+					ImGui::PushStyleColor(ImGuiCol_Button, black25);
+
+					ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 35.0f);
+					ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 35.0f);
+					ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 35.0f);
+				});
+
+			}
+
+			doOnce = false;
+		}
+
+		ImGuiTableFlags tableFlags =
+		{
+			ImGuiTableFlags_SizingFixedFit
+			| ImGuiTableFlags_Resizable
+			| ImGuiTableFlags_NoSavedSettings
+			| ImGuiTableFlags_Borders
+			//| ImGuiTableFlags_BordersInnerH
+			//| ImGuiTableFlags_BordersOuterH
+			//| ImGuiTableFlags_BordersInnerV
+			//| ImGuiTableFlags_BordersOuterV
+		};
+
+		
+		//ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(1, 1));
+		//ImGui::PopStyleVar(1);
+		if (ImGui::BeginTable(tableName, 2, tableFlags))
+		{
+			ImGui::TableSetupColumn("PropertyName", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("PropertyValue", ImGuiTableColumnFlags_WidthStretch);
+			//ImGui::TableSetColumnWidth()
+			//ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::AlignTextToFramePadding();
+			ImGui::Text("Combo");
+			ImGui::TableNextColumn();
+			ComboBoxUI("Combo");
+
+			ImGui::EndTable();
+		}
+
+		auto colorSet = [](ImVec4 color)
+		{
+			ImGui::TableNextColumn();
+			ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(color));
+			ImGui::Text(" ");
+		};
+
+		/*
+		static int colorTableColumnLimit = 20;
+		static int colorTableColorRange = 20;
+		ImGui::DragInt("###colorTableColumnLimit", &colorTableColumnLimit, 1.0f, 1, 50);
+		ImGui::DragInt("###colorTableColorRange", &colorTableColorRange, 1.0f, 0, 254);
+		
+		if (ImGui::BeginTable("###colorTableNumTestTable", 20, tableFlags))
+		{
+			float delta = colorTableColorRange / colorTableColumnLimit;
+			for (int i = 0; i < colorTableColumnLimit; i++)
+			{
+				ImGui::TableNextColumn();
+				ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, ImGui::ColorConvertFloat4ToU32(NormalizeColorGreyscale(i * delta)));
+				//ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::ColorConvertFloat4ToU32(NormalizeColorGreyscale(i * delta)), i);
+				ImGui::Text(" ");
+			}
+
+			ImGui::EndTable();
+		}
+		*/
+
+		/*
+		if (ImGuiCleanUp cp(
+			, , true); cp.opened)
+		{
+			ImGui::TableSetupColumn("Icon", ImGuiTableColumnFlags_WidthFixed);
+			ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("Toggle", ImGuiTableColumnFlags_WidthFixed);
+
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+
+			ImGui::TableNextColumn();
+			ImGui::PushItemWidth(ImGui::GetColumnWidth());
+			static const int nameLength = 30; //Teena - Better to limit object name to 30 char - UE4 FName does it to 20
+			static char name[nameLength] = "Box";
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5);
+			ImGui::PushStyleColor(ImGuiCol_FrameBg, searchBarFrameColor);
+			ImGui::InputText("###GameObjectName", name, nameLength);
+			ImGui::PopItemWidth();
+			ImGui::PopAllStyleColorVar();
+			ImGui::PopAllStyleVar();
+
+
+			ImGui::TableNextColumn();
+			static bool toggleTest = false;
+			ImGui::PushStyleColor(ImGuiCol_Button, searchBarFrameColor);
+			ImGui::ToggleButtonNoHover("No", &toggleTest, 0.4, 0.6);
+		}
+		*/
+	}
+
+	//Make a proper dock builder system
+	void InspectorWindow(const ImGuiID& inspectorWindowDockID)
+	{
+		//ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, StyleTable::tabFramePadding); //Tab EXPANDING
+		ImGui::SetNextWindowDockID(inspectorWindowDockID, ImGuiCond_FirstUseEver);
+		
+		//ImGui::PushStyleColor(ImGuiCol_FrameBg, ColorTable::activeTabColor);
+		//ImGui::PushStyleColor(ImGuiCol_WindowBg, ColorTable::activeTabColor);
+
+		ImGui::Begin("Inspector");
+		{
+			
+			PropertyTableUI("GameObjectProperty");
+		}
+		ImGui::End();
+
+		//static float col1[3] = { 1.0f, 0.0f, 0.2f };
+		//static float col2[4] = { 0.4f, 0.7f, 0.0f, 0.5f };
+		//ImGui::ColorEdit3("color 1", col1);
+		//ImGui::ColorEdit4("color 2", col2);
+		//ImGui::PopAllStyleVar();
+		//ImGui::PopAllColorVar();
+
+	}
+
+}
 
 int AstranEditorUI::StartupModule()
 {
@@ -384,7 +918,10 @@ int AstranEditorUI::StartupModule()
 		return 1;
 
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+	
+	//Always maximized for now until we can get a config file
+	glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
+	//glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
 	glfwWindowBorderlessHint(GLFW_TRUE);
 
 	GLFWmonitor* monitor = glfwGetPrimaryMonitor();
@@ -890,519 +1427,551 @@ void AstranEditorUI::WindowBarButton()
 	}
 }
 
-bool setuonce = false;
 
 void AstranEditorUI::Editor()
 {
-	ImGuiStyle& style = ImGui::GetStyle();
-	ImGuiContext& g = *GImGui;
+	//m_ImguiStacks.emplace_back(new ImguiMainWindowStack());
+
+	MainWindowBegin();
+
+	ImGuiID mainDockedSpaceID;
+	MainDockSpaceBegin(mainDockedSpaceID);
 	
-	const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+	static ImGuiID dock_id_right;
+	static ImGuiID dock_id_left = ImGui::DockBuilderSplitNode(mainDockedSpaceID, ImGuiDir_Left, 0.3f, nullptr, &dock_id_right);
+
+	InspectorWindow(dock_id_left);
+	
+	MainDockSpaceEnd();
+
+	MainWindowEnd();
+
+	
+}
+
+// void AstranEditorUI::Editor()
+// {
+// 	ImGuiStyle& style = ImGui::GetStyle();
+// 	ImGuiContext& g = *GImGui;
+// 
+// 	const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+// 
+// 	//std::cout << "main_viewport->Posx: " << main_viewport->Pos.x << " - main_viewport->Posy: " << main_viewport->Pos.y << "\n";
+// 
+// 	ImGui::SetNextWindowPos(main_viewport->Pos);
+// 	ImGui::SetNextWindowSize(main_viewport->Size);
+// 	ImGui::SetNextWindowDockID(main_viewport->ID);
+// 
+// 	ImGuiWindowFlags window_flags = 0;
+// 	{
+// 		window_flags |= ImGuiWindowFlags_NoDocking;
+// 		window_flags |= ImGuiWindowFlags_NoTitleBar;
+// 		window_flags |= ImGuiWindowFlags_NoCollapse;
+// 		window_flags |= ImGuiWindowFlags_NoResize;
+// 		//window_flags |= ImGuiWindowFlags_NoMove;
+// 		window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus;
+// 		//window_flags |= ImGuiWindowFlags_NoNavInputs;
+// 		//window_flags |= ImGuiWindowFlags_NoFocusOnAppearing;
+// 		//window_flags |= ImGuiWindowFlags_AlwaysAutoResize;
+// 		//window_flags |= ImGuiWindowFlags_NoBackground;
+// 		//window_flags |= ImGuiWindowFlags_NoSavedSettings;
+// 		//window_flags |= ImGuiWindowFlags_NoMouseInputs;
+// 		//window_flags |= ImGuiWindowFlags_MenuBar;
+// 		//window_flags |= ImGuiWindowFlags_HorizontalScrollbar;
+// 		//window_flags |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
+// 		//window_flags |= ImGuiWindowFlags_AlwaysHorizontalScrollbar;
+// 		//window_flags |= ImGuiWindowFlags_AlwaysUseWindowPadding;
+// 		//window_flags |= ImGuiWindowFlags_NoNavFocus;
+// 		//window_flags |= ImGuiWindowFlags_UnsavedDocument;
+// 	}
+// 
+// 	ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0, 0));
+// 	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+// 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+// 
+// 
+// 	ImGui::Begin("AstranEditor", nullptr, window_flags);
+// 	{
+// 
+// 	}
+// 	ImGui::End();
+// 
+// 
+// 	if (ImGuiCleanUp cp(; cp.opened)
+// 	{
+// 		ImGui::PopAllStyleVar();
+// 
+// 			ImGui::BeginGroup();
+// 		{
+// 			auto curWind = ImGui::GetCurrentWindow();
+// 
+// 				auto frameHeight = ImGui::GetFrameHeight();
+// 				auto workRectWidth = curWind->WorkRect.GetWidth();
+// 				auto sixButtonSpace = frameHeight * 6;
+// 				auto windowButtonSpace = frameHeight * 3;
+// 
+// 			auto posToUse = curWind->DC.CursorPos;
+// 
+// 
+// 			//auto iconWidth = frameHeight * 2;
+// 			//auto iconHeight = frameHeight * 2;
+// 
+// 			auto iconWidth = appIcon->m_width * 0.25f;
+// 			auto iconHeight = appIcon->m_height * 0.25f;
+// 
+// 			//ImGui::ImageButton((void*)(intptr_t)appIcon->m_textureID, ImVec2(iconWidth / 4, iconHeight / 4));
+// 			ImGui::Image((ImTextureID)appIcon->GetDescriptorSet(), ImVec2(iconWidth, iconHeight));
+// 
+// 			auto firstMenuPos = posToUse;
+// 			firstMenuPos.x += iconWidth;
+// 			float workingWidth = workRectWidth - firstMenuPos.x;
+// 
+// 			//Project Title
+// 			///////////////////////////////////////////////////////
+// 			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2);
+// 			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2);
+// 			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(40, style.FramePadding.y));
+// 
+// 			auto projectName = "Project Name is ver long sometimes so be careful";
+// 			ImVec2 projectNameLabelSize = ImGui::CalcTextSize(projectName, nullptr, true);
+// 			ImVec2 projectNameItemSize = ImGui::CalcItemSize(ImVec2(0, 0), projectNameLabelSize.x + style.FramePadding.x * 2.0f, projectNameLabelSize.y + style.FramePadding.y * 2.0f);
+// 
+// 			ImGui::PopAllStyleVar();
+// 			///////////////////////////////////////////////////////
+// 
+// 			auto menuWidth = workingWidth - projectNameItemSize.x - sixButtonSpace - 8;//8 - is size 2 border size subtraction ???
+// 			auto menuHeight = curWind->DC.MenuBarOffset.y + curWind->CalcFontSize() + g.Style.FramePadding.y * 2.0f;
+// 
+// 
+// 			window_flags |= ImGuiWindowFlags_MenuBar;
+// 
+// 			//Main Menu
+// 			{
+// 				ImGui::SetNextWindowPos(firstMenuPos);
+// 				//ImGui::SetNextWindowSize(main_viewport->Size);
+// 				//ImGui::SetNextWindowDockID(main_viewport->ID);
+// 				ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(1, 0, 0, 0));
+// 				ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(1, 0, 0, 1));
+// 
+// 				//ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, 10));
+// 				if (ImGuiCleanUp cp(ImGui::BeginChild("MainMenu", ImVec2(menuWidth, menuHeight + style.FramePadding.y), false, window_flags), ImGui::EndChild, true); cp.opened)
+// 				{
+// 					if (ImGuiCleanUp cp(ImGui::BeginMenuBar(), ImGui::EndMenuBar); cp.opened)
+// 					{
+// 						if (ImGuiCleanUp cp(ImGui::BeginMenu("File"), ImGui::EndMenu); cp.opened)
+// 						{
+// 							ImGui::MenuItem("Main menu bar", NULL);
+// 							ImGui::test_fancy_separator();
+// 						}
+// 
+// 						if (ImGuiCleanUp cp(ImGui::BeginMenu("Edit"), ImGui::EndMenu); cp.opened)
+// 						{
+// 							ImGui::MenuItem("Main menu bar", NULL);
+// 						}
+// 
+// 						if (ImGuiCleanUp cp(ImGui::BeginMenu("View"), ImGui::EndMenu); cp.opened)
+// 						{
+// 							ImGui::MenuItem("Main menu bar", NULL);
+// 						}
+// 
+// 						if (ImGuiCleanUp cp(ImGui::BeginMenu("Help"), ImGui::EndMenu); cp.opened)
+// 						{
+// 							ImGui::MenuItem("Main menu bar", NULL);
+// 						}
+// 					}
+// 				}
+// 
+// 				ImGui::PopAllStyleVar();
+// 				ImGui::PopAllStyleColorVar();
+// 			}
+// 
+// 			ImGui::BeginGroup();
+// 			{
+// 				ImVec4 disableColor = ImVec4(0, 0, 0, 0);
+// 
+// 				//Project Name Button
+// 				{
+// 					ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2);
+// 					ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2);
+// 					ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(40, style.FramePadding.y));
+// 					ImGui::PushStyleColor(ImGuiCol_Button, disableColor);
+// 					ImGui::PushStyleColor(ImGuiCol_ButtonActive, disableColor);
+// 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, disableColor);
+// 
+// 					ImGui::SameLine();
+// 					ImGui::Button(projectName);
+// 
+// 					ImGui::PopAllStyleColorVar();
+// 					ImGui::PopAllStyleVar();
+// 				}
+// 
+// 				float windowButtonFramePadding = 10;
+// 
+// 				//Spacing Dummy
+// 				ImGui::SameLine();
+// 				ImGui::Dummy(ImVec2((workRectWidth - curWind->DC.CursorPos.x) - (20 + windowButtonFramePadding * 2) * 3, 0)); //40 = 20 ori + 10*2 padding
+// 
+// 				//Minimize, Maximize, Close Button
+// 				WindowBarButton();
+// 			}
+// 			ImGui::EndGroup();
+// 
+// 			/*
+// 			firstMenuPos.y += menuHeight;
+// 
+// 			//Secondary Menu
+// 			{
+// 				ImGui::SetNextWindowPos(firstMenuPos);
+// 				//ImGui::SetNextWindowSize(main_viewport->Size);
+// 				//ImGui::SetNextWindowDockID(main_viewport->ID);
+// 				ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(1, 1, 0, 1));
+// 				ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(1, 1, 0, 1));
+// 
+// 				ImGui::BeginChild("MenuWindow2", ImVec2(workingWidth, menuHeight), false, window_flags);
+// 				{
+// 
+// 				}
+// 				ImGui::EndChild();
+// 
+// 				ImGui::PopAllStyleColorVar();
+// 			}
+// 			*/
+// 		}
+// 		ImGui::EndGroup();
+// 
+// 		ImGuiIO& io = ImGui::GetIO();
+// 
+// 		/*
+// 		ImGui::Text("io.WantCaptureMouse: %d", io.WantCaptureMouse);
+// 		ImGui::Text("io.WantCaptureKeyboard: %d", io.WantCaptureKeyboard);
+// 		ImGui::Text("io.WantTextInput: %d", io.WantTextInput);
+// 		ImGui::Text("io.WantSetMousePos: %d", io.WantSetMousePos);
+// 		//ImGui::Text("curWind->MenuBarHeight(): %d", curWind->MenuBarHeight());
+// 		ImGui::Text("io.NavActive: %d, io.NavVisible: %d", io.NavActive, io.NavVisible);
+// 		*/
+// 
+// 		//window_flags &= ~ImGuiWindowFlags_NoDocking;
+// 		window_flags |= ImGuiWindowFlags_NoBackground;
+// 		//window_flags |= ImGuiWindowFlags_NoFocusOnAppearing;
+// 
+// 		ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
+// 		ImGuiID mainDockedSpaceID = ImGui::GetID("MainDockedSpace");
+// 
+// 		ImGui::PushStyleColor(ImGuiCol_DockingEmptyBg, ImVec4(0, 0, 0, 1));
+// 		ImGui::PushStyleColor(ImGuiCol_TitleBg, normalTabColor);
+// 		ImGui::PushStyleColor(ImGuiCol_TitleBgActive, normalTabColor);
+// 		ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, normalTabColor);
+// 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, tabFramePadding); //Tab EXPANDING
+// 		ImGui::DockSpace(mainDockedSpaceID, ImVec2(0, 0));
+// 		ImGui::PopAllStyleVar();
+// 		ImGui::PopAllStyleColorVar();
+// 
+// 		static ImGuiID dock_id_right;
+// 		static auto dock_id_left = ImGui::DockBuilderSplitNode(mainDockedSpaceID, ImGuiDir_Left, 0.3f, nullptr, &dock_id_right);
+// 
+// 
+// 		// we now dock our windows into the docking node we made above
+// 		//ImGui::DockBuilderDockWindow("SecondaryWorld", dock_id_right);
+// 		//ImGui::DockBuilderDockWindow("MainWorld", dock_id_left);
+// 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, tabFramePadding); //Tab EXPANDING
+// 		ImGui::SetNextWindowDockID(dock_id_left, ImGuiCond_FirstUseEver);
+// 		ImGui::PopAllStyleVar();
+// 
+// 		ImGui::PopAllStyleColorVar();
+// 
+// 		ImGui::PushStyleColor(ImGuiCol_FrameBg, activeTabColor);
+// 		ImGui::PushStyleColor(ImGuiCol_WindowBg, activeTabColor);
+// 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, tabFramePadding); //Tab EXPANDING
+// 		if (ImGuiCleanUp cp(ImGui::Begin("Inspector"), ImGui::End, true); cp.opened) {}
+// 		ImGui::PopAllStyleVar();
+// 
+// 		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, tabFramePadding); //Tab EXPANDING
+// 		if (ImGuiCleanUp cp(ImGui::Begin("Inspector"), ImGui::End, true); cp.opened)
+// 		{
+// 			ImGui::PopAllStyleVar();
+// 			ImGuiTreeNodeFlags collapseHeaderFlag;
+// 
+// 			//GameObject details
+// 			{
+// 				ImGuiTableFlags tableFlags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoBordersInBody;
+// 
+// 				if (ImGuiCleanUp cp(ImGui::BeginTable("GameObject Table", 3, tableFlags), ImGui::EndTable, true); cp.opened)
+// 				{
+// 					ImGui::TableSetupColumn("Icon", ImGuiTableColumnFlags_WidthFixed);
+// 					ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+// 					ImGui::TableSetupColumn("Toggle", ImGuiTableColumnFlags_WidthFixed);
+// 
+// 					ImGui::TableNextRow();
+// 					ImGui::TableNextColumn();
+// 					auto frameHeight = ImGui::GetFrameHeight();
+// 					ImGui::ImageButton((ImTextureID)GameObjectOn->GetDescriptorSet(), ImVec2(frameHeight, frameHeight));
+// 
+// 					ImGui::TableNextColumn();
+// 					ImGui::PushItemWidth(ImGui::GetColumnWidth());
+// 					static const int nameLength = 30; //Teena - Better to limit object name to 30 char - UE4 FName does it to 20
+// 					static char name[nameLength] = "Box";
+// 					ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5);
+// 					ImGui::PushStyleColor(ImGuiCol_FrameBg, searchBarFrameColor);
+// 					ImGui::InputText("###GameObjectName", name, nameLength);
+// 					ImGui::PopItemWidth();
+// 					ImGui::PopAllStyleColorVar();
+// 					ImGui::PopAllStyleVar();
+// 
+// 
+// 					ImGui::TableNextColumn();
+// 					static bool toggleTest = false;
+// 					ImGui::PushStyleColor(ImGuiCol_Button, searchBarFrameColor);
+// 					ImGui::ToggleButtonNoHover("No", &toggleTest, 0.4, 0.6);
+// 					ImGui::PopAllStyleColorVar();
+// 				}
+// 
+// 				if (ImGuiCleanUp cp(ImGui::BeginTable("GameObject Properties Table", 2, tableFlags), ImGui::EndTable, true); cp.opened)
+// 				{
+// 					ImGui::TableSetupColumn("PropertyName", ImGuiTableColumnFlags_WidthFixed);
+// 					//ImGui::TableSetupColumn("Spacing", ImGuiTableColumnFlags_WidthStretch);
+// 					ImGui::TableSetupColumn("PropertyValue", ImGuiTableColumnFlags_WidthStretch);
+// 
+// 					auto curwind = ImGui::GetCurrentWindow();
+// 					const float w = ImGui::CalcItemWidth();
+// 					const ImVec2 label_size = ImGui::CalcTextSize("X", NULL, true);
+// 					const ImRect frame_bb(curwind->DC.CursorPos, curwind->DC.CursorPos + ImVec2(w, label_size.y + style.FramePadding.y * 2.0f));
+// 					const ImRect total_bb(frame_bb.Min, frame_bb.Max + ImVec2(label_size.x > 0.0f ? style.ItemInnerSpacing.x + label_size.x : 0.0f, 0.0f));
+// 					auto t = total_bb.GetSize();
+// 					t.x = 0;
+// 
+// 					ImGui::TableNextRow();
+// 					ImGui::TableNextColumn();
+// 					ImGui::ItemSize(t, style.FramePadding.y);
+// 					ImGui::SameLine();
+// 					ImGui::Text("Tag");
+// 
+// 					//ImGui::TableNextColumn();
+// 					ImGui::TableNextColumn();
+// 					ImGui::PushItemWidth(ImGui::GetColumnWidth());
+// 
+// 					// Using the generic BeginCombo() API, you have full control over how to display the combo contents.
+// 					// (your selection data could be an index, a pointer to the object, an id for the object, a flag intrusively
+// 					// stored in the object itself, etc.)
+// 					const char* items[] = { "AAAA", "BBBB", "CCCC", "DDDD", "EEEE", "FFFF", "GGGG", "HHHH", "IIII", "JJJJ", "KKKK", "LLLLLLL", "MMMM", "OOOOOOO" };
+// 					static int item_current_idx = 0; // Here we store our selection data as an index.
+// 					const char* combo_preview_value = items[item_current_idx];  // Pass in the preview value visible before opening the combo (it could be anything)
+// 					if (ImGui::BeginCombo("combo 1", combo_preview_value))
+// 					{
+// 						for (int n = 0; n < IM_ARRAYSIZE(items); n++)
+// 						{
+// 							const bool is_selected = (item_current_idx == n);
+// 							if (ImGui::Selectable(items[n], is_selected))
+// 								item_current_idx = n;
+// 
+// 							// Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
+// 							if (is_selected)
+// 								ImGui::SetItemDefaultFocus();
+// 						}
+// 						ImGui::EndCombo();
+// 					}
+// 
+// 					ImGui::TableNextRow();
+// 					ImGui::TableNextColumn();
+// 					ImGui::ItemSize(t, style.FramePadding.y);
+// 					ImGui::SameLine();
+// 					ImGui::Text("Layer");
+// 
+// 					//ImGui::TableNextColumn();
+// 					ImGui::TableNextColumn();
+// 					ImGui::PushItemWidth(ImGui::GetColumnWidth());
+// 
+// 					if (ImGui::BeginCombo("combo 2", combo_preview_value))
+// 					{
+// 						for (int n = 0; n < IM_ARRAYSIZE(items); n++)
+// 						{
+// 							const bool is_selected = (item_current_idx == n);
+// 							if (ImGui::Selectable(items[n], is_selected))
+// 								item_current_idx = n;
+// 
+// 							// Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
+// 							if (is_selected)
+// 								ImGui::SetItemDefaultFocus();
+// 						}
+// 						ImGui::EndCombo();
+// 					}
+// 				}
+// 
+// 			}
+// 
+// 			ImGui::Separator();
+// 
+// 			if (ImGui::CollapsingHeaderComponentGUI("Transform", 0, (ImTextureID)TransformIcon->GetDescriptorSet()))
+// 			{
+// 				static float test = 0;
+// 
+// 				ImGuiTableFlags tableFlags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoBordersInBody;
+// 
+// 				if (ImGuiCleanUp cp(ImGui::BeginTable("Transform Table", 7, tableFlags), ImGui::EndTable, true); cp.opened)
+// 				{
+// 					ImGui::TableSetupColumn("FieldName", ImGuiTableColumnFlags_WidthFixed, 200);
+// 					ImGui::TableSetupColumn("columnXText", ImGuiTableColumnFlags_WidthFixed);
+// 					ImGui::TableSetupColumn("columnXValue", ImGuiTableColumnFlags_WidthStretch);
+// 					ImGui::TableSetupColumn("columnYText", ImGuiTableColumnFlags_WidthFixed);
+// 					ImGui::TableSetupColumn("columnYValue", ImGuiTableColumnFlags_WidthStretch);
+// 					ImGui::TableSetupColumn("columnZText", ImGuiTableColumnFlags_WidthFixed);
+// 					ImGui::TableSetupColumn("columnZValue", ImGuiTableColumnFlags_WidthStretch);
+// 
+// 					for (int i = 0; i < 3; i++)
+// 					{
+// 						auto curwind = ImGui::GetCurrentWindow();
+// 
+// 						ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2);
+// 						//ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2);
+// 						ImGui::PushStyleColor(ImGuiCol_FrameBg, searchBarFrameColor);
+// 
+// 						const float w = ImGui::CalcItemWidth();
+// 						const ImVec2 label_size = ImGui::CalcTextSize("X", NULL, true);
+// 						const ImRect frame_bb(curwind->DC.CursorPos, curwind->DC.CursorPos + ImVec2(w, label_size.y + style.FramePadding.y * 2.0f));
+// 						const ImRect total_bb(frame_bb.Min, frame_bb.Max + ImVec2(label_size.x > 0.0f ? style.ItemInnerSpacing.x + label_size.x : 0.0f, 0.0f));
+// 						auto t = total_bb.GetSize();
+// 						t.x = 0;
+// 
+// 						ImGui::TableNextRow();
+// 						ImGui::TableNextColumn();
+// 						//ImGui::TableSetColumnWidth(ImGui::GetColumnIndex(), 60);
+// 						//Teena - Only call this once for now, since the rest have correct text alignment
+// 						ImGui::ItemSize(t, style.FramePadding.y);
+// 						ImGui::SameLine();
+// 						//std::string name = 
+// 						ImGui::Text("Position");
+// 
+// 						ImGui::TableNextColumn();
+// 						ImGui::Text("X:");
+// 						ImGui::TableNextColumn();
+// 						ImGui::PushItemWidth(ImGui::GetColumnWidth());
+// 						ImGui::DragFloat("####X", &test, 0.01f, 0, 0, "%.2f");
+// 						ImGui::PopItemWidth();
+// 
+// 						ImGui::TableNextColumn();
+// 						ImGui::Text("Y:");
+// 						ImGui::TableNextColumn();
+// 						ImGui::PushItemWidth(ImGui::GetColumnWidth());
+// 						ImGui::DragFloat("###Y", &test, 0.01f, 0, 0, "%.2f");
+// 						ImGui::PopItemWidth();
+// 
+// 						ImGui::TableNextColumn();
+// 						ImGui::Text("Z:");
+// 						ImGui::TableNextColumn();
+// 						ImGui::PushItemWidth(ImGui::GetColumnWidth());
+// 						ImGui::DragFloat("###Z", &test, 0.01f, 0, 0, "%.2f");
+// 						ImGui::PopItemWidth();
+// 
+// 						ImGui::PopAllStyleColorVar();
+// 						ImGui::PopAllStyleVar();
+// 					}
+// 				}
+// 
+// 			}
+// 
+// 			ImGuiTableFlags tableFlags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoBordersInBody;
+// 			static bool rigidBodyHeaderOpened = false;
+// 
+// 
+// 
+// 			//bool hovered, held;
+// 			//bool pressed = ButtonBehavior(interact_bb, id, &hovered, &held, button_flags);
+// 
+// 			static ImVec2 framePosBegin;
+// 			static ImVec2 framePosEnd;
+// 
+// 			ImRect rect(framePosBegin, framePosEnd);
+// 
+// 			//printf_s("x: %f - y: %f", (framePosBegin - framePosEnd).x, (framePosBegin - framePosEnd).y);
+// 
+// 			//ImGui::RenderFrame(rect.Min, rect.Max, ImGui::GetColorU32(ImVec4(1, 0, 0, 1)), true, 0);
+// 
+// 
+// 			framePosBegin = ImGui::GetCurrentWindowRead()->DC.CursorPos;
+// 			//ImGui::TablePushBackgroundChannel();
+// 
+// 
+// 
+// 			if (ImGuiCleanUp cp(ImGui::BeginTable("RigidBodyHeader", 6, tableFlags), ImGui::EndTable, true); cp.opened)
+// 			{
+// 				ImGui::TableSetupColumn("ArrowButton", ImGuiTableColumnFlags_WidthFixed);
+// 				ImGui::TableSetupColumn("Icon", ImGuiTableColumnFlags_WidthFixed);
+// 				ImGui::TableSetupColumn("Text", ImGuiTableColumnFlags_WidthFixed);
+// 				ImGui::TableSetupColumn("Spacing", ImGuiTableColumnFlags_WidthStretch);
+// 				ImGui::TableSetupColumn("Toggle", ImGuiTableColumnFlags_WidthFixed);
+// 				ImGui::TableSetupColumn("ThreeDotButton", ImGuiTableColumnFlags_WidthFixed);
+// 
+// 				ImGui::TableNextRow();
+// 				ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(1, 0, 0, 1)));
+// 
+// 				ImGui::TableNextColumn();
+// 				ImVec4 transparent = ImVec4(0, 0, 0, 0);
+// 				ImGui::PushStyleColor(ImGuiCol_FrameBg, transparent);
+// 				ImGui::PushStyleColor(ImGuiCol_Button, transparent);
+// 				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, transparent);
+// 				ImGui::PushStyleColor(ImGuiCol_ButtonActive, transparent);
+// 				if (ImGui::ArrowButton("###RigidBodyHeaderArrow", rigidBodyHeaderOpened ? ImGuiDir_Down : ImGuiDir_Right)) { rigidBodyHeaderOpened = !rigidBodyHeaderOpened; }
+// 				ImGui::PopAllStyleColorVar();
+// 
+// 				ImGui::TableNextColumn();
+// 				ImGui::Image((ImTextureID)TransformIcon->GetDescriptorSet(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+// 
+// 				ImGui::TableNextColumn();
+// 				ImGui::Text("RigidBody");
+// 
+// 				ImGui::TableNextColumn();
+// 				ImGui::InvisibleButton("###Check", ImVec2(ImGui::GetColumnWidth(), ImGui::GetFrameHeight()));
+// 				//rect = ImRect(rect.Min, rect.Min + ImGui::GetItemRectSize());
+// 				//ImGui::RenderFrame(rect.Min, rect.Max, ImGui::GetColorU32(ImVec4(1, 0, 0, 1)), true, 0);
+// 
+// 				ImGui::TableNextColumn();
+// 				ImGui::ToggleButtonNoHover("rigidbodyEnabled", &rigidBodyHeaderOpened, 0.4, 0.6);
+// 
+// 				ImGui::TableNextColumn();
+// 				ImGui::PushStyleColor(ImGuiCol_FrameBg, transparent);
+// 				ImGui::PushStyleColor(ImGuiCol_Button, transparent);
+// 				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, transparent);
+// 				ImGui::PushStyleColor(ImGuiCol_ButtonActive, transparent);
+// 				ImGui::ImageButton((ImTextureID)ThreeDotButtonIcon->GetDescriptorSet(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()), ImVec2(), ImVec2(1, 1), 0);
+// 				ImGui::PopAllStyleVar();
+// 				ImGui::PopAllStyleColorVar();
+// 				framePosEnd = ImGui::GetCurrentWindowRead()->DC.CursorPos;
+// 				framePosEnd.x += ImGui::GetFrameHeight();
+// 			}
+// 
+// 
+// 
+// 			ImGui::PushStyleColor(ImGuiCol_Separator, black);
+// 			ImGui::Separator();
+// 			ImGui::PopAllStyleColorVar();
+// 		}
+// 
+// 		ImGui::SetNextWindowDockID(dock_id_right, ImGuiCond_FirstUseEver);
+// 		ImGui::Begin("Viewport");
+// 		ImGui::End();
+// 
+// 		//Teena: Do a final clean up regardless of orders
+// 		ImGui::PopAllStyleVar();
+// 		ImGui::PopAllStyleColorVar();
+// 	}
+// 
+// 	ImGuiWindowFlags window_flagsTes = 0;
+// 	{
+// 		window_flagsTes |= ImGuiWindowFlags_NoDocking;
+// 		//window_flagsTes |= ImGuiWindowFlags_NoTitleBar;
+// 		window_flagsTes |= ImGuiWindowFlags_MenuBar;
+// 		window_flagsTes |= ImGuiWindowFlags_AlwaysUseWindowPadding;
+// 	}
+// 
+// 	ImGui::Begin("AstranEditorChild", nullptr, window_flagsTes);
+// 	ImGui::Button("HHHHHHH");
+// 	ImGui::Text("Hello");
+// 	ImGui::End();
+// }
+
+
+void ImguiRender()
+{
 
-	//std::cout << "main_viewport->Posx: " << main_viewport->Pos.x << " - main_viewport->Posy: " << main_viewport->Pos.y << "\n";
-
-	ImGui::SetNextWindowPos(main_viewport->Pos);
-	ImGui::SetNextWindowSize(main_viewport->Size);
-	ImGui::SetNextWindowDockID(main_viewport->ID);
-
-	ImGuiWindowFlags window_flags = 0;
-	{
-		window_flags |= ImGuiWindowFlags_NoDocking;
-		window_flags |= ImGuiWindowFlags_NoTitleBar;
-		window_flags |= ImGuiWindowFlags_NoCollapse;
-		window_flags |= ImGuiWindowFlags_NoResize;
-		//window_flags |= ImGuiWindowFlags_NoMove;
-		window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus;
-		//window_flags |= ImGuiWindowFlags_NoNavInputs;
-		//window_flags |= ImGuiWindowFlags_NoFocusOnAppearing;
-		//window_flags |= ImGuiWindowFlags_AlwaysAutoResize;
-		//window_flags |= ImGuiWindowFlags_NoBackground;
-		//window_flags |= ImGuiWindowFlags_NoSavedSettings;
-		//window_flags |= ImGuiWindowFlags_NoMouseInputs;
-		//window_flags |= ImGuiWindowFlags_MenuBar;
-		//window_flags |= ImGuiWindowFlags_HorizontalScrollbar;
-		//window_flags |= ImGuiWindowFlags_AlwaysVerticalScrollbar;
-		//window_flags |= ImGuiWindowFlags_AlwaysHorizontalScrollbar;
-		//window_flags |= ImGuiWindowFlags_AlwaysUseWindowPadding;
-		//window_flags |= ImGuiWindowFlags_NoNavFocus;
-		//window_flags |= ImGuiWindowFlags_UnsavedDocument;
-	}
-
-	ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0, 0));
-	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-
-	if (ImGuiCleanUp cp(ImGui::Begin("AstranEditor", nullptr, window_flags
-		//& ~ImGuiWindowFlags_NoResize
-	), ImGui::End, true); cp.opened)
-	{
-		ImGui::PopAllStyleVar();
-
-		ImGui::BeginGroup();
-		{
-			auto curWind = ImGui::GetCurrentWindow();
-
-			auto frameHeight = ImGui::GetFrameHeight();
-			auto workRectWidth = curWind->WorkRect.GetWidth();
-			auto sixButtonSpace = frameHeight * 6;
-			auto windowButtonSpace = frameHeight * 3;
-
-			auto posToUse = curWind->DC.CursorPos;
-
-
-			//auto iconWidth = frameHeight * 2;
-			//auto iconHeight = frameHeight * 2;
-
-			auto iconWidth = appIcon->m_width * 0.25f;
-			auto iconHeight = appIcon->m_height * 0.25f;
-
-			//ImGui::ImageButton((void*)(intptr_t)appIcon->m_textureID, ImVec2(iconWidth / 4, iconHeight / 4));
-			ImGui::Image((ImTextureID)appIcon->GetDescriptorSet(), ImVec2(iconWidth, iconHeight));
-
-			auto firstMenuPos = posToUse;
-			firstMenuPos.x += iconWidth;
-			float workingWidth = workRectWidth - firstMenuPos.x;
-
-			//Project Title
-			///////////////////////////////////////////////////////
-			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2);
-			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2);
-			ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(40, style.FramePadding.y));
-
-			auto projectName = "Project Name is ver long sometimes so be careful";
-			ImVec2 projectNameLabelSize = ImGui::CalcTextSize(projectName, nullptr, true);
-			ImVec2 projectNameItemSize = ImGui::CalcItemSize(ImVec2(0, 0), projectNameLabelSize.x + style.FramePadding.x * 2.0f, projectNameLabelSize.y + style.FramePadding.y * 2.0f);
-
-			ImGui::PopAllStyleVar();
-			///////////////////////////////////////////////////////
-
-			auto menuWidth = workingWidth - projectNameItemSize.x - sixButtonSpace - 8;//8 - is size 2 border size subtraction ???
-			auto menuHeight = curWind->DC.MenuBarOffset.y + curWind->CalcFontSize() + g.Style.FramePadding.y * 2.0f;
-
-
-			window_flags |= ImGuiWindowFlags_MenuBar;
-
-			//Main Menu
-			{
-				ImGui::SetNextWindowPos(firstMenuPos);
-				//ImGui::SetNextWindowSize(main_viewport->Size);
-				//ImGui::SetNextWindowDockID(main_viewport->ID);
-				ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(1, 0, 0, 0));
-				ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(1, 0, 0, 1));
-
-				//ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(style.FramePadding.x, 10));
-				if (ImGuiCleanUp cp(ImGui::BeginChild("MainMenu", ImVec2(menuWidth, menuHeight + style.FramePadding.y), false, window_flags), ImGui::EndChild, true); cp.opened)
-				{
-					if (ImGuiCleanUp cp(ImGui::BeginMenuBar(), ImGui::EndMenuBar); cp.opened)
-					{
-						if (ImGuiCleanUp cp(ImGui::BeginMenu("File"), ImGui::EndMenu); cp.opened)
-						{
-							ImGui::MenuItem("Main menu bar", NULL);
-							ImGui::test_fancy_separator();
-						}
-
-						if (ImGuiCleanUp cp(ImGui::BeginMenu("Edit"), ImGui::EndMenu); cp.opened)
-						{
-							ImGui::MenuItem("Main menu bar", NULL);
-						}
-
-						if (ImGuiCleanUp cp(ImGui::BeginMenu("View"), ImGui::EndMenu); cp.opened)
-						{
-							ImGui::MenuItem("Main menu bar", NULL);
-						}
-
-						if (ImGuiCleanUp cp(ImGui::BeginMenu("Help"), ImGui::EndMenu); cp.opened)
-						{
-							ImGui::MenuItem("Main menu bar", NULL);
-						}
-					}
-				}
-
-				ImGui::PopAllStyleVar();
-				ImGui::PopAllStyleColorVar();
-			}
-
-			ImGui::BeginGroup();
-			{
-				ImVec4 disableColor = ImVec4(0, 0, 0, 0);
-
-				//Project Name Button
-				{
-					ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2);
-					ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2);
-					ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(40, style.FramePadding.y));
-					ImGui::PushStyleColor(ImGuiCol_Button, disableColor);
-					ImGui::PushStyleColor(ImGuiCol_ButtonActive, disableColor);
-					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, disableColor);
-
-					ImGui::SameLine();
-					ImGui::Button(projectName);
-
-					ImGui::PopAllStyleColorVar();
-					ImGui::PopAllStyleVar();
-				}
-
-				float windowButtonFramePadding = 10;
-
-				//Spacing Dummy
-				ImGui::SameLine();
-				ImGui::Dummy(ImVec2((workRectWidth - curWind->DC.CursorPos.x) - (20 + windowButtonFramePadding * 2) * 3, 0)); //40 = 20 ori + 10*2 padding
-
-				//Minimize, Maximize, Close Button
-				WindowBarButton();
-			}
-			ImGui::EndGroup();
-
-			/*
-			firstMenuPos.y += menuHeight;
-
-			//Secondary Menu
-			{
-				ImGui::SetNextWindowPos(firstMenuPos);
-				//ImGui::SetNextWindowSize(main_viewport->Size);
-				//ImGui::SetNextWindowDockID(main_viewport->ID);
-				ImGui::PushStyleColor(ImGuiCol_MenuBarBg, ImVec4(1, 1, 0, 1));
-				ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(1, 1, 0, 1));
-
-				ImGui::BeginChild("MenuWindow2", ImVec2(workingWidth, menuHeight), false, window_flags);
-				{
-
-				}
-				ImGui::EndChild();
-
-				ImGui::PopAllStyleColorVar();
-			}
-			*/
-		}
-		ImGui::EndGroup();
-
-		ImGuiIO& io = ImGui::GetIO();
-
-		/*
-		ImGui::Text("io.WantCaptureMouse: %d", io.WantCaptureMouse);
-		ImGui::Text("io.WantCaptureKeyboard: %d", io.WantCaptureKeyboard);
-		ImGui::Text("io.WantTextInput: %d", io.WantTextInput);
-		ImGui::Text("io.WantSetMousePos: %d", io.WantSetMousePos);
-		//ImGui::Text("curWind->MenuBarHeight(): %d", curWind->MenuBarHeight());
-		ImGui::Text("io.NavActive: %d, io.NavVisible: %d", io.NavActive, io.NavVisible);
-		*/
-
-		//window_flags &= ~ImGuiWindowFlags_NoDocking;
-		window_flags |= ImGuiWindowFlags_NoBackground;
-		//window_flags |= ImGuiWindowFlags_NoFocusOnAppearing;
-
-		ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_PassthruCentralNode;
-		ImGuiID mainDockedSpaceID = ImGui::GetID("MainDockedSpace");
-
-		ImGui::PushStyleColor(ImGuiCol_DockingEmptyBg, ImVec4(0, 0, 0, 1));
-		ImGui::PushStyleColor(ImGuiCol_TitleBg, normalTabColor);
-		ImGui::PushStyleColor(ImGuiCol_TitleBgActive, normalTabColor);
-		ImGui::PushStyleColor(ImGuiCol_TitleBgCollapsed, normalTabColor);
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, tabFramePadding); //Tab EXPANDING
-		ImGui::DockSpace(mainDockedSpaceID, ImVec2(0, 0));
-		ImGui::PopAllStyleVar();
-		ImGui::PopAllStyleColorVar();
-
-		static ImGuiID dock_id_right;
-		static auto dock_id_left = ImGui::DockBuilderSplitNode(mainDockedSpaceID, ImGuiDir_Left, 0.3f, nullptr, &dock_id_right);
-
-
-		// we now dock our windows into the docking node we made above
-		//ImGui::DockBuilderDockWindow("SecondaryWorld", dock_id_right);
-		//ImGui::DockBuilderDockWindow("MainWorld", dock_id_left);
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, tabFramePadding); //Tab EXPANDING
-		ImGui::SetNextWindowDockID(dock_id_left, ImGuiCond_FirstUseEver);
-		ImGui::PopAllStyleVar();
-
-		ImGui::PopAllStyleColorVar();
-
-		ImGui::PushStyleColor(ImGuiCol_FrameBg, activeTabColor);
-		ImGui::PushStyleColor(ImGuiCol_WindowBg, activeTabColor);
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, tabFramePadding); //Tab EXPANDING
-		if (ImGuiCleanUp cp(ImGui::Begin("Inspector"), ImGui::End, true); cp.opened) {}
-		ImGui::PopAllStyleVar();
-
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, tabFramePadding); //Tab EXPANDING
-		if (ImGuiCleanUp cp(ImGui::Begin("Inspector"), ImGui::End, true); cp.opened)
-		{
-			ImGui::PopAllStyleVar();
-			ImGuiTreeNodeFlags collapseHeaderFlag;
-
-			//GameObject details
-			{
-				ImGuiTableFlags tableFlags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoBordersInBody;
-
-				if (ImGuiCleanUp cp(ImGui::BeginTable("GameObject Table", 3, tableFlags), ImGui::EndTable, true); cp.opened)
-				{
-					ImGui::TableSetupColumn("Icon", ImGuiTableColumnFlags_WidthFixed);
-					ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn("Toggle", ImGuiTableColumnFlags_WidthFixed);
-
-					ImGui::TableNextRow();
-					ImGui::TableNextColumn();
-					auto frameHeight = ImGui::GetFrameHeight();
-					ImGui::ImageButton((ImTextureID)GameObjectOn->GetDescriptorSet(), ImVec2(frameHeight, frameHeight));
-
-					ImGui::TableNextColumn();
-					ImGui::PushItemWidth(ImGui::GetColumnWidth());
-					static const int nameLength = 30; //Teena - Better to limit object name to 30 char - UE4 FName does it to 20
-					static char name[nameLength] = "Box";
-					ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5);
-					ImGui::PushStyleColor(ImGuiCol_FrameBg, searchBarFrameColor);
-					ImGui::InputText("###GameObjectName", name, nameLength);
-					ImGui::PopItemWidth();
-					ImGui::PopAllStyleColorVar();
-					ImGui::PopAllStyleVar();
-
-
-					ImGui::TableNextColumn();
-					static bool toggleTest = false;
-					ImGui::PushStyleColor(ImGuiCol_Button, searchBarFrameColor);
-					ImGui::ToggleButtonNoHover("No", &toggleTest, 0.4, 0.6);
-					ImGui::PopAllStyleColorVar();
-				}
-
-				if (ImGuiCleanUp cp(ImGui::BeginTable("GameObject Properties Table", 2, tableFlags), ImGui::EndTable, true); cp.opened)
-				{
-					ImGui::TableSetupColumn("PropertyName", ImGuiTableColumnFlags_WidthFixed);
-					//ImGui::TableSetupColumn("Spacing", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn("PropertyValue", ImGuiTableColumnFlags_WidthStretch);
-
-					auto curwind = ImGui::GetCurrentWindow();
-					const float w = ImGui::CalcItemWidth();
-					const ImVec2 label_size = ImGui::CalcTextSize("X", NULL, true);
-					const ImRect frame_bb(curwind->DC.CursorPos, curwind->DC.CursorPos + ImVec2(w, label_size.y + style.FramePadding.y * 2.0f));
-					const ImRect total_bb(frame_bb.Min, frame_bb.Max + ImVec2(label_size.x > 0.0f ? style.ItemInnerSpacing.x + label_size.x : 0.0f, 0.0f));
-					auto t = total_bb.GetSize();
-					t.x = 0;
-
-					ImGui::TableNextRow();
-					ImGui::TableNextColumn();
-					ImGui::ItemSize(t, style.FramePadding.y);
-					ImGui::SameLine();
-					ImGui::Text("Tag");
-
-					//ImGui::TableNextColumn();
-					ImGui::TableNextColumn();
-					ImGui::PushItemWidth(ImGui::GetColumnWidth());
-
-					// Using the generic BeginCombo() API, you have full control over how to display the combo contents.
-					// (your selection data could be an index, a pointer to the object, an id for the object, a flag intrusively
-					// stored in the object itself, etc.)
-					const char* items[] = { "AAAA", "BBBB", "CCCC", "DDDD", "EEEE", "FFFF", "GGGG", "HHHH", "IIII", "JJJJ", "KKKK", "LLLLLLL", "MMMM", "OOOOOOO" };
-					static int item_current_idx = 0; // Here we store our selection data as an index.
-					const char* combo_preview_value = items[item_current_idx];  // Pass in the preview value visible before opening the combo (it could be anything)
-					if (ImGui::BeginCombo("combo 1", combo_preview_value))
-					{
-						for (int n = 0; n < IM_ARRAYSIZE(items); n++)
-						{
-							const bool is_selected = (item_current_idx == n);
-							if (ImGui::Selectable(items[n], is_selected))
-								item_current_idx = n;
-
-							// Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
-							if (is_selected)
-								ImGui::SetItemDefaultFocus();
-						}
-						ImGui::EndCombo();
-					}
-
-					ImGui::TableNextRow();
-					ImGui::TableNextColumn();
-					ImGui::ItemSize(t, style.FramePadding.y);
-					ImGui::SameLine();
-					ImGui::Text("Layer");
-
-					//ImGui::TableNextColumn();
-					ImGui::TableNextColumn();
-					ImGui::PushItemWidth(ImGui::GetColumnWidth());
-
-					if (ImGui::BeginCombo("combo 2", combo_preview_value))
-					{
-						for (int n = 0; n < IM_ARRAYSIZE(items); n++)
-						{
-							const bool is_selected = (item_current_idx == n);
-							if (ImGui::Selectable(items[n], is_selected))
-								item_current_idx = n;
-
-							// Set the initial focus when opening the combo (scrolling + keyboard navigation focus)
-							if (is_selected)
-								ImGui::SetItemDefaultFocus();
-						}
-						ImGui::EndCombo();
-					}
-				}
-
-			}
-
-			ImGui::Separator();
-
-			if (ImGui::CollapsingHeaderComponentGUI("Transform", 0, (ImTextureID)TransformIcon->GetDescriptorSet()))
-			{
-				static float test = 0;
-
-				ImGuiTableFlags tableFlags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoBordersInBody;
-
-				if (ImGuiCleanUp cp(ImGui::BeginTable("Transform Table", 7, tableFlags), ImGui::EndTable, true); cp.opened)
-				{
-					ImGui::TableSetupColumn("FieldName", ImGuiTableColumnFlags_WidthFixed, 200);
-					ImGui::TableSetupColumn("columnXText", ImGuiTableColumnFlags_WidthFixed);
-					ImGui::TableSetupColumn("columnXValue", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn("columnYText", ImGuiTableColumnFlags_WidthFixed);
-					ImGui::TableSetupColumn("columnYValue", ImGuiTableColumnFlags_WidthStretch);
-					ImGui::TableSetupColumn("columnZText", ImGuiTableColumnFlags_WidthFixed);
-					ImGui::TableSetupColumn("columnZValue", ImGuiTableColumnFlags_WidthStretch);
-
-					for (int i = 0; i < 3; i++)
-					{
-						auto curwind = ImGui::GetCurrentWindow();
-
-						ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2);
-						//ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2);
-						ImGui::PushStyleColor(ImGuiCol_FrameBg, searchBarFrameColor);
-
-						const float w = ImGui::CalcItemWidth();
-						const ImVec2 label_size = ImGui::CalcTextSize("X", NULL, true);
-						const ImRect frame_bb(curwind->DC.CursorPos, curwind->DC.CursorPos + ImVec2(w, label_size.y + style.FramePadding.y * 2.0f));
-						const ImRect total_bb(frame_bb.Min, frame_bb.Max + ImVec2(label_size.x > 0.0f ? style.ItemInnerSpacing.x + label_size.x : 0.0f, 0.0f));
-						auto t = total_bb.GetSize();
-						t.x = 0;
-
-						ImGui::TableNextRow();
-						ImGui::TableNextColumn();
-						//ImGui::TableSetColumnWidth(ImGui::GetColumnIndex(), 60);
-						//Teena - Only call this once for now, since the rest have correct text alignment
-						ImGui::ItemSize(t, style.FramePadding.y);
-						ImGui::SameLine();
-						//std::string name = 
-						ImGui::Text("Position");
-
-						ImGui::TableNextColumn();
-						ImGui::Text("X:");
-						ImGui::TableNextColumn();
-						ImGui::PushItemWidth(ImGui::GetColumnWidth());
-						ImGui::DragFloat("####X", &test, 0.01f, 0, 0, "%.2f");
-						ImGui::PopItemWidth();
-
-						ImGui::TableNextColumn();
-						ImGui::Text("Y:");
-						ImGui::TableNextColumn();
-						ImGui::PushItemWidth(ImGui::GetColumnWidth());
-						ImGui::DragFloat("###Y", &test, 0.01f, 0, 0, "%.2f");
-						ImGui::PopItemWidth();
-
-						ImGui::TableNextColumn();
-						ImGui::Text("Z:");
-						ImGui::TableNextColumn();
-						ImGui::PushItemWidth(ImGui::GetColumnWidth());
-						ImGui::DragFloat("###Z", &test, 0.01f, 0, 0, "%.2f");
-						ImGui::PopItemWidth();
-
-						ImGui::PopAllStyleColorVar();
-						ImGui::PopAllStyleVar();
-					}
-				}
-
-			}
-
-			ImGuiTableFlags tableFlags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_NoBordersInBody;
-			static bool rigidBodyHeaderOpened = false;
-
-
-
-			//bool hovered, held;
-			//bool pressed = ButtonBehavior(interact_bb, id, &hovered, &held, button_flags);
-
-			static ImVec2 framePosBegin;
-			static ImVec2 framePosEnd;
-
-			ImRect rect(framePosBegin, framePosEnd);
-
-			//printf_s("x: %f - y: %f", (framePosBegin - framePosEnd).x, (framePosBegin - framePosEnd).y);
-
-			//ImGui::RenderFrame(rect.Min, rect.Max, ImGui::GetColorU32(ImVec4(1, 0, 0, 1)), true, 0);
-
-
-			framePosBegin = ImGui::GetCurrentWindowRead()->DC.CursorPos;
-			//ImGui::TablePushBackgroundChannel();
-
-
-
-			if (ImGuiCleanUp cp(ImGui::BeginTable("RigidBodyHeader", 6, tableFlags), ImGui::EndTable, true); cp.opened)
-			{
-				ImGui::TableSetupColumn("ArrowButton", ImGuiTableColumnFlags_WidthFixed);
-				ImGui::TableSetupColumn("Icon", ImGuiTableColumnFlags_WidthFixed);
-				ImGui::TableSetupColumn("Text", ImGuiTableColumnFlags_WidthFixed);
-				ImGui::TableSetupColumn("Spacing", ImGuiTableColumnFlags_WidthStretch);
-				ImGui::TableSetupColumn("Toggle", ImGuiTableColumnFlags_WidthFixed);
-				ImGui::TableSetupColumn("ThreeDotButton", ImGuiTableColumnFlags_WidthFixed);
-
-				ImGui::TableNextRow();
-				ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(1, 0, 0, 1)));
-
-				ImGui::TableNextColumn();
-				ImVec4 transparent = ImVec4(0, 0, 0, 0);
-				ImGui::PushStyleColor(ImGuiCol_FrameBg, transparent);
-				ImGui::PushStyleColor(ImGuiCol_Button, transparent);
-				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, transparent);
-				ImGui::PushStyleColor(ImGuiCol_ButtonActive, transparent);
-				if (ImGui::ArrowButton("###RigidBodyHeaderArrow", rigidBodyHeaderOpened ? ImGuiDir_Down : ImGuiDir_Right)) { rigidBodyHeaderOpened = !rigidBodyHeaderOpened; }
-				ImGui::PopAllStyleColorVar();
-
-				ImGui::TableNextColumn();
-				ImGui::Image((ImTextureID)TransformIcon->GetDescriptorSet(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
-
-				ImGui::TableNextColumn();
-				ImGui::Text("RigidBody");
-
-				ImGui::TableNextColumn();
-				ImGui::InvisibleButton("###Check", ImVec2(ImGui::GetColumnWidth(), ImGui::GetFrameHeight()));
-				//rect = ImRect(rect.Min, rect.Min + ImGui::GetItemRectSize());
-				//ImGui::RenderFrame(rect.Min, rect.Max, ImGui::GetColorU32(ImVec4(1, 0, 0, 1)), true, 0);
-
-				ImGui::TableNextColumn();
-				ImGui::ToggleButtonNoHover("rigidbodyEnabled", &rigidBodyHeaderOpened, 0.4, 0.6);
-
-				ImGui::TableNextColumn();
-				ImGui::PushStyleColor(ImGuiCol_FrameBg, transparent);
-				ImGui::PushStyleColor(ImGuiCol_Button, transparent);
-				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, transparent);
-				ImGui::PushStyleColor(ImGuiCol_ButtonActive, transparent);
-				ImGui::ImageButton((ImTextureID)ThreeDotButtonIcon->GetDescriptorSet(), ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()), ImVec2(), ImVec2(1, 1), 0);
-				ImGui::PopAllStyleVar();
-				ImGui::PopAllStyleColorVar();
-				framePosEnd = ImGui::GetCurrentWindowRead()->DC.CursorPos;
-				framePosEnd.x += ImGui::GetFrameHeight();
-			}
-
-
-
-			ImGui::PushStyleColor(ImGuiCol_Separator, black);
-			ImGui::Separator();
-			ImGui::PopAllStyleColorVar();
-		}
-
-		ImGui::SetNextWindowDockID(dock_id_right, ImGuiCond_FirstUseEver);
-		ImGui::Begin("Viewport");
-		ImGui::End();
-
-		//Teena: Do a final clean up regardless of orders
-		ImGui::PopAllStyleVar();
-		ImGui::PopAllStyleColorVar();
-	}
-
-	ImGuiWindowFlags window_flagsTes = 0;
-	{
-		window_flagsTes |= ImGuiWindowFlags_NoDocking;
-		//window_flagsTes |= ImGuiWindowFlags_NoTitleBar;
-		window_flagsTes |= ImGuiWindowFlags_MenuBar;
-		window_flagsTes |= ImGuiWindowFlags_AlwaysUseWindowPadding;
-	}
-
-	ImGui::Begin("AstranEditorChild", nullptr, window_flagsTes);
-	ImGui::Button("HHHHHHH");
-	ImGui::Text("Hello");
-	ImGui::End();
 }
 
 void AstranEditorUI::EditorStyle()
@@ -1704,6 +2273,10 @@ void AstranEditorUI::ImGuiRender()
 	srand(time(NULL));
 	double prevTime = glfwGetTime();
 
+	//EditorStyle();
+	//Editor();
+	//UE5Editor();
+
 	while (!glfwWindowShouldClose(window) && m_Running)
 	{
 		// Poll and handle events (inputs, window resize, etc.)
@@ -1753,9 +2326,23 @@ void AstranEditorUI::ImGuiRender()
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		EditorStyle();
 		Editor();
-		//UE5Editor();
+
+		/*
+		for (ImguiStack* stack : m_ImguiStacks)
+		{
+			stack->Initialize();
+			stack->Begin();
+			stack->Update();
+		}
+
+		for (auto stack = m_ImguiStacks.rbegin(); stack != m_ImguiStacks.rend(); ++stack)
+		{
+			ImguiStack* stackTemp = *stack;
+			stackTemp->End();
+			stackTemp->Destruct();
+		}
+		*/
 
 		// Rendering
 		ImGui::Render();
@@ -1912,73 +2499,4 @@ void AstranEditorUI::StyleColorsDarkUE5()
 	colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
 	colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
 	colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
-}
-
-
-VkInstance AstranEditorUI::GetInstance()
-{
-	return g_Instance;
-}
-
-VkPhysicalDevice AstranEditorUI::GetPhysicalDevice()
-{
-	return g_PhysicalDevice;
-}
-
-VkDevice AstranEditorUI::GetDevice()
-{
-	return g_Device;
-}
-
-VkCommandBuffer AstranEditorUI::GetCommandBuffer(bool begin)
-{
-	ImGui_ImplVulkanH_Window* wd = &g_MainWindowData;
-
-	// Use any command queue
-	VkCommandPool command_pool = wd->Frames[wd->FrameIndex].CommandPool;
-
-	VkCommandBufferAllocateInfo cmdBufAllocateInfo = {};
-	cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-	cmdBufAllocateInfo.commandPool = command_pool;
-	cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	cmdBufAllocateInfo.commandBufferCount = 1;
-
-	VkCommandBuffer command_buffer;
-	auto err = vkAllocateCommandBuffers(g_Device, &cmdBufAllocateInfo, &command_buffer);
-
-	VkCommandBufferBeginInfo begin_info = {};
-	begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-	begin_info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-	err = vkBeginCommandBuffer(command_buffer, &begin_info);
-	check_vk_result(err);
-
-	return command_buffer;
-}
-
-void AstranEditorUI::FlushCommandBuffer(VkCommandBuffer commandBuffer)
-{
-	const uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
-
-	VkSubmitInfo end_info = {};
-	end_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	end_info.commandBufferCount = 1;
-	end_info.pCommandBuffers = &commandBuffer;
-	auto err = vkEndCommandBuffer(commandBuffer);
-	check_vk_result(err);
-
-	// Create fence to ensure that the command buffer has finished executing
-	VkFenceCreateInfo fenceCreateInfo = {};
-	fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-	fenceCreateInfo.flags = 0;
-	VkFence fence;
-	err = vkCreateFence(g_Device, &fenceCreateInfo, nullptr, &fence);
-	check_vk_result(err);
-
-	err = vkQueueSubmit(g_Queue, 1, &end_info, fence);
-	check_vk_result(err);
-
-	err = vkWaitForFences(g_Device, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT);
-	check_vk_result(err);
-
-	vkDestroyFence(g_Device, fence, nullptr);
 }

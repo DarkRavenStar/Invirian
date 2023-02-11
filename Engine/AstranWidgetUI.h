@@ -148,7 +148,7 @@ namespace ImGui
 		PopStyleVar(g.StyleVarStack.Size);
 	}
 
-	void PopAllStyleColorVar()
+	void PopAllColorVar()
 	{
 		ImGuiContext& g = *GImGui;
 		PopStyleColor(g.ColorStack.Size);
